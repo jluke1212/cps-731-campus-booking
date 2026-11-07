@@ -8,10 +8,10 @@
 | booking/clock.py        |        4 |        1 |        0 |        0 |     75% |         7 |
 | booking/database.py     |       37 |       12 |       14 |        2 |     69% |12, 25, 45-53, 57 |
 | booking/example.py      |       29 |       29 |        4 |        0 |      0% |      3-57 |
-| booking/main.py         |      122 |        3 |       36 |        3 |     96% |175, 178, 276 |
+| booking/main.py         |      142 |        2 |       48 |        2 |     98% |  175, 178 |
 | booking/models.py       |       16 |        0 |        0 |        0 |    100% |           |
 | booking/schemas.py      |       19 |        0 |        2 |        0 |    100% |           |
-| **TOTAL**               |  **227** |   **45** |   **56** |    **5** | **80%** |           |
+| **TOTAL**               |  **247** |   **44** |   **68** |    **4** | **83%** |           |
 
 
 ## Setup coverage badge
