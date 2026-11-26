@@ -22,6 +22,8 @@ def test_student_can_browse_seeded_resources(tmp_path: Path) -> None:
         {"id": 2, "name": "Study room B", "kind": "room"},
         {"id": 3, "name": "Camera 01", "kind": "device"},
         {"id": 4, "name": "Camera 02", "kind": "device"},
+        {"id": 5, "name": "Meeting room", "kind": "room"},
+        {"id": 6, "name": "Projector", "kind": "device"},
     ]
 
 
@@ -37,7 +39,7 @@ def test_documented_init_command_is_repeatable(tmp_path: Path) -> None:
         )
         assert "Initialized" in result.stdout
     with TestClient(create_app(database)) as client:
-        assert len(client.get("/resources").json()) == 4
+        assert len(client.get("/resources").json()) == 6
 
 
 def test_startup_and_init_preserve_persisted_changes(tmp_path: Path) -> None:
@@ -64,7 +66,7 @@ def test_databases_are_isolated_and_startup_does_not_seed(tmp_path: Path) -> Non
     initialize(seeded)
     with TestClient(create_app(seeded)) as first:
         with TestClient(create_app(empty)) as second:
-            assert len(first.get("/resources").json()) == 4
+            assert len(first.get("/resources").json()) == 6
             assert second.get("/resources").json() == []
 
 
@@ -90,9 +92,9 @@ def test_reset_requires_confirmation_and_restores_samples(tmp_path: Path) -> Non
     refused = subprocess.run(command, env=environment, capture_output=True)
     assert refused.returncode != 0
     with TestClient(create_app(database)) as client:
-        assert len(client.get("/resources").json()) == 5
+        assert len(client.get("/resources").json()) == 7
     for _ in range(2):
         subprocess.run(command + ["--yes"], env=environment, check=True)
         with TestClient(create_app(database)) as client:
             resources = client.get("/resources").json()
-            assert [resource["id"] for resource in resources] == [1, 2, 3, 4]
+            assert [resource["id"] for resource in resources] == [1, 2, 3, 4, 5, 6]

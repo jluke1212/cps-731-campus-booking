@@ -17,26 +17,65 @@ from booking.schemas import (
     BookingCreate,
     BookingRead,
     ErrorResponse,
+    ResourceRead,
     SeriesCreate,
     SeriesRead,
 )
 
 MAX_DURATION = timedelta(hours=8)
+HOUR_WORDS = {1: "one", 2: "two", 4: "four", 8: "eight", 24: "twenty-four"}
 
 
-def validate_interval(start: datetime, end: datetime, now: datetime) -> None:
+def describe_hours(limit: timedelta) -> str:
+    """Render a whole-hour limit as words, matching the baseline messages."""
+    minutes = int(limit.total_seconds()) // 60
+    if minutes % 60 == 0 and minutes // 60 in HOUR_WORDS:
+        hours = minutes // 60
+        return f"{HOUR_WORDS[hours]} hour{'s' if hours != 1 else ''}"
+    return f"{minutes} minutes"
+
+
+def max_duration(resource: Resource) -> timedelta:
+    return timedelta(minutes=resource.max_duration_minutes)
+
+
+def cancel_notice(resource: Resource) -> timedelta:
+    return timedelta(minutes=resource.min_cancel_notice_minutes)
+
+
+def validate_interval(
+    start: datetime,
+    end: datetime,
+    now: datetime,
+    limit: timedelta = MAX_DURATION,
+) -> None:
     """Apply the booking time rules shared by single and recurring bookings.
 
     Start must be strictly after now, end must follow start, and the duration
-    must be at most eight hours. Overnight intervals are allowed. Raises 422
-    with the baseline error messages.
+    must be at most the resource's limit (eight hours unless the resource sets
+    another). Exactly the limit is allowed. Overnight intervals are allowed.
+    Raises 422.
     """
     if start <= now:
         raise HTTPException(422, "Start must be in the future")
     if end <= start:
         raise HTTPException(422, "End must be after start")
-    if end - start > MAX_DURATION:
-        raise HTTPException(422, "Duration must be at most eight hours")
+    if end - start > limit:
+        raise HTTPException(422, f"Duration must be at most {describe_hours(limit)}")
+
+
+def check_cancel_notice(resource: Resource, start: datetime, now: datetime) -> None:
+    """Refuse cancellation with less than the resource's minimum notice.
+
+    Exactly the minimum notice is allowed. Raises 409.
+    """
+    notice = cancel_notice(resource)
+    if start - now < notice:
+        raise HTTPException(
+            409,
+            f"Cancellation needs at least {describe_hours(notice)} notice "
+            "for this resource",
+        )
 
 
 def find_conflict(
@@ -88,7 +127,7 @@ def create_app(
             status_code=422, content={"detail": "Invalid request shape or timestamp"}
         )
 
-    @app.get("/resources", response_model=list[Resource])
+    @app.get("/resources", response_model=list[ResourceRead])
     def list_resources() -> list[Resource]:
         """List persisted rooms and devices in ID order. No identity needed."""
         with Session(engine) as session:
@@ -114,9 +153,12 @@ def create_app(
         with Session(engine) as session:
             if session.get(User, x_user_id) is None:
                 raise HTTPException(404, "Unknown user")
-            if session.get(Resource, request.resource_id) is None:
+            resource = session.get(Resource, request.resource_id)
+            if resource is None:
                 raise HTTPException(404, "Unknown resource")
-            validate_interval(request.start, request.end, clock())
+            validate_interval(
+                request.start, request.end, clock(), max_duration(resource)
+            )
             if (
                 find_conflict(session, request.resource_id, request.start, request.end)
                 is not None
@@ -180,8 +222,12 @@ def create_app(
                 raise HTTPException(403, "Only the owner can cancel this booking")
             if booking.cancelled:
                 return booking
-            if booking.start <= clock():
+            now = clock()
+            if booking.start <= now:
                 raise HTTPException(409, "Booking has already started")
+            resource = session.get(Resource, booking.resource_id)
+            assert resource is not None
+            check_cancel_notice(resource, booking.start, now)
             booking.cancelled = True
             session.add(booking)
             session.commit()
@@ -209,15 +255,17 @@ def create_app(
         with Session(engine) as session:
             if session.get(User, x_user_id) is None:
                 raise HTTPException(404, "Unknown user")
-            if session.get(Resource, request.resource_id) is None:
+            resource = session.get(Resource, request.resource_id)
+            if resource is None:
                 raise HTTPException(404, "Unknown resource")
             # Validate every week before creating anything.
             now = clock()
+            limit = max_duration(resource)
             intervals: list[tuple[datetime, datetime]] = []
             for week in range(request.count):
                 start = request.start + timedelta(weeks=week)
                 end = request.end + timedelta(weeks=week)
-                validate_interval(start, end, now)
+                validate_interval(start, end, now, limit)
                 if find_conflict(session, request.resource_id, start, end) is not None:
                     raise HTTPException(
                         409, "Resource is already booked for this interval"
@@ -306,10 +354,12 @@ def create_app(
         """Cancel every remaining future occurrence of a series as its owner.
 
         Checks the user, then the series, then ownership (403 for anyone else,
-        including on repeats). Occurrences that have started or ended are left
-        unchanged, and that is not an error. Already-cancelled occurrences stay
-        as they are, so a repeat request changes nothing. All cancellations are
-        saved in one commit. Returns the series with every occurrence.
+        including on repeats). The affected occurrences are the uncancelled ones
+        that have not started. If any of them has less than the resource's
+        minimum cancellation notice, none are cancelled (409). Otherwise all of
+        them are cancelled in one commit. Started occurrences and cancelled
+        records are left as they are, so a repeat request changes nothing.
+        Returns the series with every occurrence.
         """
         with Session(engine) as session:
             if session.get(User, x_user_id) is None:
@@ -327,10 +377,15 @@ def create_app(
                     .order_by(col(Booking.start))
                 ).all()
             )
-            for booking in bookings:
-                if not booking.cancelled and booking.start > now:
-                    booking.cancelled = True
-                    session.add(booking)
+            affected = [b for b in bookings if not b.cancelled and b.start > now]
+            resource = session.get(Resource, series.resource_id)
+            assert resource is not None
+            # Check every affected week before changing any of them.
+            for booking in affected:
+                check_cancel_notice(resource, booking.start, now)
+            for booking in affected:
+                booking.cancelled = True
+                session.add(booking)
             session.commit()
             for booking in bookings:
                 session.refresh(booking)

@@ -33,6 +33,20 @@ def initialize(path: Path, *, reset: bool = False) -> None:
                 Resource(id=2, name="Study room B", kind="room"),
                 Resource(id=3, name="Camera 01", kind="device"),
                 Resource(id=4, name="Camera 02", kind="device"),
+                Resource(
+                    id=5,
+                    name="Meeting room",
+                    kind="room",
+                    max_duration_minutes=120,
+                    min_cancel_notice_minutes=1440,
+                ),
+                Resource(
+                    id=6,
+                    name="Projector",
+                    kind="device",
+                    max_duration_minutes=480,
+                    min_cancel_notice_minutes=60,
+                ),
             ]:
                 if session.get(Resource, resource.id) is None:
                     session.add(resource)
