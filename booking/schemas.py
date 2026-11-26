@@ -31,6 +31,12 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class ResourceRead(BaseModel):
+    id: int
+    name: str
+    kind: str
+
+
 class BookingCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

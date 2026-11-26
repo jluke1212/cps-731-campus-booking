@@ -12,6 +12,8 @@ class Resource(SQLModel, table=True):
     id: int = Field(primary_key=True)
     name: str
     kind: str
+    max_duration_minutes: int = 480
+    min_cancel_notice_minutes: int = 0
 
 
 class Booking(SQLModel, table=True):
