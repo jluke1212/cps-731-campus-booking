@@ -15,9 +15,9 @@ Group 12: Hin Ki Jacob Luke, Ravi Kumar, Toneri He, Sayeed Jalil.
 - **Testing persisted state, not just status codes.** Comparing the whole
   database before and after a rejected request is what proves "nothing was
   saved", and it caught the partial-series case.
- - **Clear Change plan made implementation easier.** A clear initial change plan 
-   allowed for better understanding of the project's requirements, and thus fewer
-   conflicts during the implementation phase.
+- **Clear Change plan made implementation easier.** A clear initial change plan 
+  allowed for better understanding of the project's requirements, and thus fewer
+  conflicts during the implementation phase.
 
 ## What caused difficulty
 
