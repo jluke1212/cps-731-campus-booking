@@ -1,4 +1,4 @@
-# Campus resource booking starter
+# Campus resource booking (CPS731 Group 12)
 [![Lint status](https://github.com/miranska/cps-731-campus-booking/actions/workflows/lint-status.yml/badge.svg?branch=main&event=workflow_run)](https://github.com/miranska/cps-731-campus-booking/actions/workflows/ci.yml?query=branch%3Amain)
 [![Test status](https://github.com/miranska/cps-731-campus-booking/actions/workflows/test-status.yml/badge.svg?branch=main&event=workflow_run)](https://github.com/miranska/cps-731-campus-booking/actions/workflows/ci.yml?query=branch%3Amain)
 [![Coverage](https://github.com/miranska/cps-731-campus-booking/raw/python-coverage-comment-action-data/badge.svg)](https://github.com/miranska/cps-731-campus-booking/tree/python-coverage-comment-action-data)
@@ -6,6 +6,24 @@
 
 This is a **course simulation of an existing system**, created for CPS731.
 Browse resources and create, retrieve, list and cancel persistent single bookings and weekly recurring reservations.
+Each resource has its own maximum booking duration and minimum cancellation notice
+(our extension, see [Resource-specific rules](#resource-specific-rules-extension)).
+
+## Handoff at a glance
+
+| Need | Where |
+| --- | --- |
+| Set up, run and test | [Run locally](#run-locally), [Verify and read the code](#verify-and-read-the-code) |
+| Extension plan, written before implementation | [`docs/extension-plan.md`](docs/extension-plan.md) |
+| Design decisions, alternatives and changes from our plans | [`docs/design.md`](docs/design.md) |
+| Recorded check commands and results, including failures | [`docs/check-results.md`](docs/check-results.md) |
+| Known limitations | [Known limitations](#known-limitations) |
+| Retrospective | [`docs/retrospective.md`](docs/retrospective.md) |
+
+**Upgrading an existing database:** the schema changed (new `series` table,
+`booking.series_id`, and two policy columns on `resource`). `init` does not alter
+existing tables, so run `python -m booking.database reset --yes` once. This deletes
+existing data.
 
 ## Run locally
 
@@ -76,9 +94,14 @@ After fresh initialization, expect HTTP **200** and:
   {"id": 1, "name": "Study room A", "kind": "room"},
   {"id": 2, "name": "Study room B", "kind": "room"},
   {"id": 3, "name": "Camera 01", "kind": "device"},
-  {"id": 4, "name": "Camera 02", "kind": "device"}
+  {"id": 4, "name": "Camera 02", "kind": "device"},
+  {"id": 5, "name": "Meeting room", "kind": "room"},
+  {"id": 6, "name": "Projector", "kind": "device"}
 ]
 ```
+
+The response shape is unchanged from the starter: booking policies are stored on
+each resource but not listed here (see [Resource-specific rules](#resource-specific-rules-extension)).
 
 `GET /resources` takes no parameters or identity header. It returns every stored
 resource ordered by integer `id`; `name` is its display label, and `kind` describes
@@ -131,13 +154,15 @@ Timezone conversion and daylight-saving transition scenarios are outside this
 simulation. Use ordinary dates away from those transitions.
 
 Start must be strictly after now; end must be strictly after start. Duration
-must be at most eight hours, including overnight bookings. Intervals include
+must be at most the resource's maximum (eight hours for resources 1 to 4 and the
+Projector, two hours for the Meeting room), including overnight bookings. Intervals include
 start and exclude end, so 10:00–11:00 and 11:00–12:00 are adjacent and permitted.
 Any overlap with an uncancelled booking on the same resource is rejected;
 identical times on different resources are permitted.
 
 Only the owner may cancel a booking. An active booking can be cancelled strictly
-before its start; at or after start the request returns 409 and preserves it.
+before its start, and only with at least the resource's minimum notice; otherwise
+the request returns 409 and preserves it. Resources 1 to 4 need no extra notice.
 Cancellation returns the same record with `cancelled: true`, retains it in reads
 and releases its slot for another valid booking. Owner retries return 200 with
 the unchanged cancelled record, even after the original start. Ownership is
@@ -157,10 +182,10 @@ Errors use `{"detail": "message"}` consistently:
 
 | HTTP status | Meaning |
 | --- | --- |
-| 403 | `Only the owner can cancel this booking` |
-| 404 | `Unknown user`, `Unknown resource` or `Unknown booking` |
-| 409 | `Resource is already booked for this interval` or `Booking has already started` |
-| 422 | `Invalid request shape or timestamp`, `Start must be in the future`, `End must be after start` or `Duration must be at most eight hours` |
+| 403 | `Only the owner can cancel this booking` or `Only the owner can cancel this series` |
+| 404 | `Unknown user`, `Unknown resource`, `Unknown booking` or `Unknown series` |
+| 409 | `Resource is already booked for this interval`, `Booking has already started` or `Cancellation needs at least ... notice for this resource` |
+| 422 | `Invalid request shape or timestamp`, `Start must be in the future`, `End must be after start` or `Duration must be at most ...` (for example `eight hours` or `two hours`) |
 
 A missing/malformed identity header also returns 422. Rejected creation or cancellation leaves
 all persisted bookings unchanged. Cancellation resolves the seeded user before
@@ -169,7 +194,7 @@ and their response models.
 
 ## Weekly Recurring Reservations
 
-The service supports weekly recurring reservations for the same resource at the same campus-local time. A single request creates 1 to 12 occurrences, each exactly seven day apart.
+The service supports weekly recurring reservations for the same resource at the same campus-local time. A single request creates 1 to 12 occurrences, each exactly seven days apart.
 
 ### Series API
 
@@ -191,7 +216,7 @@ With `X-User-ID: 1`, this creates three bookings for resource 1 on January 15, 2
 
 The acting user owns the series and all its occurrences. Ownership comes from `X-User-ID`, not the request body.
 
-Every occurrence must start strictly in the future, end after its start and last no longer than eight hours. Overnight bookings are permitted within the duration limit. Back-to-back bookings do not conflict.
+Every occurrence must start strictly in the future, end after its start and last no longer than the resource's maximum duration. Overnight bookings are permitted within the duration limit. Back-to-back bookings do not conflict.
 
 Every occurrence is checked against existing uncancelled bookings on the same resource. If any occurrence conflicts, the entire request returns 409 and no new series or bookings are created. Once all checks pass, the series and its occurrences are saved in one database transaction.
 
@@ -213,13 +238,53 @@ curl -X POST -H 'X-User-ID: 1' http://127.0.0.1:8000/series/1/cancel
 
 Substitute the IDs returned by creation.
 
-Only the owner can cancel a series. Series cancellation marks uncancelled occurrences whose start times are strictly in the future as cancelled. Past and ongoing occurrences remain unchanged. Cancelled records remain available in reads and no longer occupy their resource slots.
+Only the owner can cancel a series. Series cancellation affects the uncancelled occurrences whose start times are strictly in the future. If any of them has less than the resource's minimum cancellation notice, none are cancelled and the request returns 409. Otherwise all of them are cancelled in one transaction. Past and ongoing occurrences remain unchanged. Cancelled records remain available in reads and no longer occupy their resource slots.
 
 Repeating a completed series cancellation returns 200 without additional changes. A non-owner receives 403, including when the series was already cancelled.
 
 Series data and its linked bookings persist after restarting the application. Existing single bookings continue to work without belonging to a series.
 
 The implementation guarantees correct behaviour for sequential requests. Simultaneous reservation conflicts and daylight-saving transitions are outside the required simulation scope.
+
+## Resource-specific rules (extension)
+
+Each resource stores a maximum duration per occurrence and a minimum cancellation
+notice. Seed data:
+
+| ID | Resource | Max duration per occurrence | Min cancellation notice |
+| --- | --- | --- | --- |
+| 1 to 4 | Study rooms and cameras | 8 hours | none (strictly before start, as in the core) |
+| 5 | Meeting room | 2 hours | 24 hours |
+| 6 | Projector | 8 hours | 1 hour |
+
+- The duration limit applies to single bookings and to every week of a series.
+  Exactly the maximum is allowed; one second more returns 422 and, for a series,
+  creates nothing.
+- Cancellation is allowed at exactly the minimum notice; one second less returns
+  409 and the booking stays active. Ownership (403) and "already started" (409)
+  are still checked first, so core behaviour is unchanged for resources 1 to 4.
+- Series cancellation checks notice on every week it would cancel. If any week
+  is too close, nothing is cancelled. A later week can still be cancelled on its
+  own through `POST /bookings/{booking_id}/cancel` if it meets the notice.
+- Repeating a successful cancellation stays harmless, even after the notice
+  window has passed.
+- Policies are set in seed data only; there is no policy-management endpoint.
+
+Example: a Meeting room series has two weeks left, the next starting in 12 hours
+and the other next week. `POST /series/{id}/cancel` returns 409 and both weeks stay
+booked; cancelling the later week individually succeeds.
+
+## Known limitations
+
+- **Simultaneous requests:** two requests at the same moment can both pass the
+  availability check before either saves, so concurrent double-booking is not
+  prevented (same limit as the starter).
+- **Daylight saving:** transition dates are outside the simulation and untested.
+- **Schema changes need a reset:** `init` does not migrate existing tables.
+- **No policy management:** changing a resource's limits requires editing seed
+  data or the database directly.
+- **Notice is checked at request time only:** there is no background job; it is
+  enforced when someone asks to cancel.
 
 ### Run the full worked example
 
@@ -247,6 +312,12 @@ python -m ruff check .
 python -m ruff format --check .
 python -m mypy booking
 ```
+
+Recorded results for the submitted version, including an earlier failing run and
+what the checks leave unchecked, are in [`docs/check-results.md`](docs/check-results.md).
+Tests: `test_bookings.py`, `test_cancellation.py` and `test_resources.py` (core),
+`test_series.py` and `test_series_cancel.py` (recurring reservations),
+`test_resource_rules.py` (extension, checks E1 to E12).
 
 For application line and branch coverage, use the CI test command:
 
