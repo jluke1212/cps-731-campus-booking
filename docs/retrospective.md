@@ -15,6 +15,9 @@ Group 12: Hin Ki Jacob Luke, Ravi Kumar, Toneri He, Sayeed Jalil.
 - **Testing persisted state, not just status codes.** Comparing the whole
   database before and after a rejected request is what proves "nothing was
   saved", and it caught the partial-series case.
+ - **Clear Change plan made implementation easier.** A clear initial change plan 
+   allowed for better understanding of the project's requirements, and thus fewer
+   conflicts during the implementation phase.
 
 ## What caused difficulty
 
@@ -38,4 +41,5 @@ Group 12: Hin Ki Jacob Luke, Ravi Kumar, Toneri He, Sayeed Jalil.
 - Use a private repository that isn't a fork, and enable CI before writing code.
 - Write the design note and check results alongside each PR rather than at the end.
 - Split work by file where possible, and merge small PRs early to reduce conflicts.
-- Set an internal deadline a day before the real one.
+- Set an internal deadline a day before the real one, with consistent check-ins to 
+  ensure progress is made by when it is needed.
